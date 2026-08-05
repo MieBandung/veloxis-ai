@@ -48,3 +48,79 @@ veloxis-ai/
 ├── docker-compose.yml        # Multi-container Docker Orchestrator
 ├── .gitignore                # Git Exclusions
 └── README.md                 # Project Documentation
+
+```
+
+---
+
+## 🚀 Quick Start (Local Running)
+
+### Prerequisites
+
+Pastikan **Docker Desktop** sudah terinstall dan aktif di komputer kamu.
+
+### Running with Docker Compose (Recommended)
+
+```bash
+# 1. Clone Repository
+git clone [https://github.com/Lowwyi/veloxis-ai.git](https://github.com/Lowwyi/veloxis-ai.git)
+cd veloxis-ai
+
+# 2. Setup Environment Variables
+cp .env.example .env
+
+# 3. Build and Run Container
+docker compose up --build
+
+```
+
+Akses layanan melalui browser:
+
+* **Frontend UI**: `http://localhost:3000`
+* **Backend API**: `http://localhost:8000`
+* **Interactive API Docs (Swagger)**: `http://localhost:8000/docs`
+
+---
+
+## ⚙️ Environment Variables
+
+Buat file `.env` di root folder dengan konfigurasi berikut:
+
+```env
+# Server Config
+PORT=8000
+ENVIRONMENT=development
+
+# AI Model Credentials
+VISION_LLM_API_KEY=your_vision_llm_api_key_here
+MODEL_NAME=gemini-1.5-flash
+
+```
+
+---
+
+## 📡 API Reference
+
+### Extract Logistics Document
+
+* **Endpoint**: `POST /api/v1/extract`
+* **Content-Type**: `multipart/form-data`
+* **Request Body**: `file` (Format: `.pdf`, `.png`, `.jpg`, `.jpeg`)
+* **Response**: `200 OK` (Structured JSON)
+
+```json
+{
+  "nomor_dokumen": "SJ/2026/08/010",
+  "jenis_dokumen": "Surat Jalan",
+  "nama_vendor": "PT Logistik Maju Bersama",
+  "tanggal": "2026-08-05",
+  "items": [
+    {
+      "sku": "SKU-LOG-01",
+      "nama_barang": "Kardus Master Box",
+      "qty": 150,
+      "satuan": "Box",
+      "berat_kg": 75.0
+    }
+  ]
+}
