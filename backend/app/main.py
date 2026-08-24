@@ -39,6 +39,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
 @app.get("/health")
 def health_check():
     return {
@@ -49,6 +50,7 @@ def health_check():
     }
 
 @app.post("/extract")
+@app.post("/api/v1/extract")
 async def extract_document(file: UploadFile = File(...)):
     # Validate MIME type
     content_type = (file.content_type or "").lower()
@@ -80,8 +82,14 @@ async def extract_document(file: UploadFile = File(...)):
             )
 
         data = run_inference(file_bytes, filename or "uploaded_image")
+        # Ensure top-level fields match expected frontend structure if wrapped
         return {
             "success": True,
+            "nomor_dokumen": data.get("nomor_dokumen"),
+            "jenis_dokumen": data.get("jenis_dokumen"),
+            "nama_vendor": data.get("nama_vendor"),
+            "tanggal": data.get("tanggal"),
+            "items": data.get("items", []),
             "data": data
         }
 
