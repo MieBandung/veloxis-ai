@@ -1,10 +1,13 @@
-import io
 import json
 import logging
 import os
+from typing import Any
+
 from PIL import Image
 from pydantic import ValidationError
+
 from app.model import model_container
+from app.preprocessing import DocumentError, load_document_pages
 from app.schemas import ExtractionResult
 
 logger = logging.getLogger("veloxis.inference")
@@ -51,30 +54,20 @@ MOCK_RESULT = {
             "nama_barang": "Barang Demo A",
             "qty": 5.0,
             "satuan": "pcs",
-            "berat_kg": 1.25
+            "berat_kg": 1.25,
         }
     ],
     "grand_total": 150000.0,
 }
 
-def load_document_image(file_bytes: bytes, filename: str) -> Image.Image:
-    """Decode an upload into a single RGB PIL image. PDFs render their first page."""
-    if filename.lower().endswith(".pdf") or file_bytes[:5] == b"%PDF-":
-        try:
-            import pypdfium2 as pdfium
-
-            pdf = pdfium.PdfDocument(file_bytes)
-            if len(pdf) == 0:
-                raise ValueError("PDF has no pages.")
-            bitmap = pdf[0].render(scale=2)
-            return bitmap.to_pil().convert("RGB")
-        except Exception as e:
-            raise ValueError(f"Could not render PDF: {e}")
-
-    try:
-        return Image.open(io.BytesIO(file_bytes)).convert("RGB")
-    except Exception as e:
-        raise ValueError(f"Invalid image content: {e}")
+HEADER_FIELDS = (
+    "nomor_dokumen",
+    "jenis_dokumen",
+    "nama_vendor",
+    "nama_penerima",
+    "tanggal",
+    "grand_total",
+)
 
 def extract_json_substring(text: str) -> str:
     start_idx = text.find("{")
@@ -83,79 +76,107 @@ def extract_json_substring(text: str) -> str:
         return text[start_idx : end_idx + 1]
     raise ValueError("No JSON object found in output.")
 
-def run_inference(image_bytes: bytes, filename: str) -> dict:
-    mode = model_container.ai_mode
-
-    if mode == "mock":
-        logger.info(f"Running mock extraction for file: {filename}")
-        result = ExtractionResult.model_validate(MOCK_RESULT)
-        return result.model_dump()
-
-    # Qwen mode
-    image = load_document_image(image_bytes, filename)
+def _generate(image: Image.Image) -> dict:
+    """Run one page through the model and return the parsed JSON object."""
+    from qwen_vl_utils import process_vision_info
 
     model = model_container.model
     processor = model_container.processor
 
-    if not model or not processor:
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "image": image,
+                    # Pin the same budget the adapter was trained on, so qwen_vl_utils
+                    # cannot fall back to the base model's much wider defaults.
+                    "min_pixels": model_container.min_pixels,
+                    "max_pixels": model_container.max_pixels,
+                },
+                {"type": "text", "text": PROMPT_TEXT},
+            ],
+        }
+    ]
+
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    image_inputs, video_inputs = process_vision_info(messages)
+    inputs = processor(
+        text=[text],
+        images=image_inputs,
+        videos=video_inputs,
+        padding=True,
+        return_tensors="pt",
+    )
+    inputs = inputs.to(model.device)
+
+    generated_ids = model.generate(
+        **inputs,
+        max_new_tokens=int(os.getenv("MAX_NEW_TOKENS", "512")),
+        do_sample=False,
+        num_beams=1,
+    )
+    generated_ids_trimmed = [
+        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+    ]
+    output_text = processor.batch_decode(
+        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+    )[0]
+
+    logger.debug("Raw Qwen model output: %s", output_text)
+    return json.loads(extract_json_substring(output_text))
+
+def merge_pages(pages: list[dict]) -> dict:
+    """Fold multi-page results into one document: first non-null header wins, items concatenate."""
+    if len(pages) == 1:
+        return pages[0]
+
+    merged: dict[str, Any] = {field: None for field in HEADER_FIELDS}
+    merged["items"] = []
+    for page in pages:
+        for field in HEADER_FIELDS:
+            if merged[field] in (None, "") and page.get(field) not in (None, ""):
+                merged[field] = page[field]
+        merged["items"].extend(page.get("items") or [])
+    return merged
+
+def run_inference(file_bytes: bytes, filename: str, content_type: str = "") -> dict:
+    # Always decode first, including in mock mode, so the document error paths behave
+    # identically whether or not a GPU is attached.
+    # DocumentError propagates as-is: main.py maps it to a readable UNREADABLE_DOCUMENT.
+    pages = load_document_pages(
+        file_bytes,
+        filename=filename,
+        content_type=content_type,
+        min_pixels=model_container.min_pixels,
+        max_pixels=model_container.max_pixels,
+    )
+
+    if model_container.ai_mode == "mock":
+        logger.info("Running mock extraction for file: %s (%s page(s))", filename, len(pages))
+        return ExtractionResult.model_validate(MOCK_RESULT).model_dump()
+
+    if not model_container.model or not model_container.processor:
         raise RuntimeError("Model or processor is not initialized.")
 
+    logger.info("Extracting %s page(s) from %s", len(pages), filename)
+
     try:
-        from qwen_vl_utils import process_vision_info
-
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": image},
-                    {"type": "text", "text": PROMPT_TEXT},
-                ],
-            }
-        ]
-
-        text = processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        image_inputs, video_inputs = process_vision_info(messages)
-        inputs = processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        )
-        inputs = inputs.to(model.device)
-
-        max_new_tokens = int(os.getenv("MAX_NEW_TOKENS", "512"))
-
-        generated_ids = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            num_beams=1,
-        )
-
-        generated_ids_trimmed = [
-            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
-        output_text = processor.batch_decode(
-            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )[0]
-
-        logger.debug(f"Raw Qwen model output: {output_text}")
-
-        json_str = extract_json_substring(output_text)
-        parsed_json = json.loads(json_str)
-
-        validated_result = ExtractionResult.model_validate(parsed_json)
-        return validated_result.model_dump()
+        page_results = [_generate(page) for page in pages]
+        return ExtractionResult.model_validate(merge_pages(page_results)).model_dump()
 
     except json.JSONDecodeError as err:
-        logger.error(f"JSON parsing error: {err}")
+        logger.error("JSON parsing error: %s", err)
         raise ValueError("INVALID_MODEL_OUTPUT: Model output could not be parsed as valid JSON.")
     except ValidationError as err:
-        logger.error(f"Pydantic validation error: {err}")
+        # Must precede ValueError: pydantic's ValidationError subclasses it.
+        logger.error("Pydantic validation error: %s", err)
         raise ValueError("INVALID_MODEL_OUTPUT: Model output does not conform to ExtractionResult schema.")
+    except ValueError as err:
+        # extract_json_substring found no JSON at all.
+        logger.error("Model returned no JSON object: %s", err)
+        raise ValueError("INVALID_MODEL_OUTPUT: Model output contained no JSON object.")
     except Exception as err:
-        logger.error(f"Inference execution error: {err}")
-        raise RuntimeError(f"INFERENCE_FAILURE: {str(err)}")
+        logger.error("Inference execution error: %s", err)
+        raise RuntimeError(f"INFERENCE_FAILURE: {err}")

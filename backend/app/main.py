@@ -10,6 +10,7 @@ load_dotenv()
 
 from app.model import model_container
 from app.inference import run_inference
+from app.preprocessing import DocumentError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("veloxis.main")
@@ -49,40 +50,44 @@ def health_check():
         "ai_mode": model_container.ai_mode,
     }
 
+def error_response(status_code: int, code: str, message: str) -> JSONResponse:
+    """Uniform error envelope. Messages stay free of stack traces and internals."""
+    return JSONResponse(
+        status_code=status_code,
+        content={"success": False, "error": {"code": code, "message": message}},
+    )
+
 @app.post("/extract")
 @app.post("/api/v1/extract")
 async def extract_document(file: UploadFile = File(...)):
-    # Validate MIME type
     content_type = (file.content_type or "").lower()
     filename = file.filename or ""
+
     if content_type not in ALLOWED_MIME_TYPES and not filename.lower().endswith(ALLOWED_EXTENSIONS):
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={
-                "success": False,
-                "error": {
-                    "code": "INVALID_FILE",
-                    "message": "Unsupported file format. Only JPG, PNG, WEBP, and PDF are supported."
-                }
-            }
+        return error_response(
+            status.HTTP_400_BAD_REQUEST,
+            "INVALID_FILE",
+            "Unsupported file format. Only JPG, PNG, WEBP, and PDF are supported.",
         )
 
     try:
         file_bytes = await file.read()
-        if len(file_bytes) > MAX_FILE_SIZE:
-            return JSONResponse(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                content={
-                    "success": False,
-                    "error": {
-                        "code": "FILE_TOO_LARGE",
-                        "message": f"File size exceeds limit of {MAX_FILE_SIZE // (1024*1024)}MB."
-                    }
-                }
+
+        if not file_bytes:
+            return error_response(
+                status.HTTP_400_BAD_REQUEST, "EMPTY_FILE", "The uploaded file is empty."
             )
 
-        data = run_inference(file_bytes, filename or "uploaded_image")
-        # Ensure top-level fields match expected frontend structure if wrapped
+        if len(file_bytes) > MAX_FILE_SIZE:
+            return error_response(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                "FILE_TOO_LARGE",
+                f"File size exceeds limit of {MAX_FILE_SIZE // (1024 * 1024)}MB.",
+            )
+
+        data = run_inference(file_bytes, filename or "uploaded_document", content_type)
+
+        # Flattened fields are kept alongside `data` for backward compatibility.
         return {
             "success": True,
             "nomor_dokumen": data.get("nomor_dokumen"),
@@ -90,43 +95,44 @@ async def extract_document(file: UploadFile = File(...)):
             "nama_vendor": data.get("nama_vendor"),
             "tanggal": data.get("tanggal"),
             "items": data.get("items", []),
-            "data": data
+            "data": data,
         }
 
+    except DocumentError as e:
+        # The file arrived intact but could not be turned into readable pages.
+        logger.warning("Unreadable document %s: %s", filename, e)
+        return error_response(status.HTTP_400_BAD_REQUEST, "UNREADABLE_DOCUMENT", str(e))
+
     except ValueError as e:
-        err_msg = str(e)
-        code = "INVALID_MODEL_OUTPUT" if "INVALID_MODEL_OUTPUT" in err_msg else "INVALID_FILE"
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR if code == "INVALID_MODEL_OUTPUT" else status.HTTP_400_BAD_REQUEST,
-            content={
-                "success": False,
-                "error": {
-                    "code": code,
-                    "message": err_msg.replace("INVALID_MODEL_OUTPUT: ", "")
-                }
-            }
-        )
+        message = str(e)
+        if "INVALID_MODEL_OUTPUT" in message:
+            logger.warning("Model output rejected for %s: %s", filename, message)
+            return error_response(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "INVALID_MODEL_OUTPUT",
+                "The document could not be read reliably enough to extract data.",
+            )
+        return error_response(status.HTTP_400_BAD_REQUEST, "INVALID_FILE", message)
+
     except RuntimeError as e:
-        err_msg = str(e)
-        return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE if "not initialized" in err_msg else status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "success": False,
-                "error": {
-                    "code": "MODEL_UNAVAILABLE" if "not initialized" in err_msg else "INFERENCE_FAILURE",
-                    "message": err_msg.replace("INFERENCE_FAILURE: ", "")
-                }
-            }
+        message = str(e)
+        if "not initialized" in message:
+            return error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "MODEL_UNAVAILABLE",
+                "The extraction model is not ready yet.",
+            )
+        logger.error("Inference failure for %s: %s", filename, message)
+        return error_response(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "INFERENCE_FAILURE",
+            "Extraction failed while processing the document.",
         )
+
     except Exception as e:
-        logger.error(f"Unexpected extract error: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "success": False,
-                "error": {
-                    "code": "INTERNAL_SERVER_ERROR",
-                    "message": "An unexpected server error occurred during processing."
-                }
-            }
+        logger.error("Unexpected extract error: %s", e, exc_info=True)
+        return error_response(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "INTERNAL_SERVER_ERROR",
+            "An unexpected server error occurred during processing.",
         )

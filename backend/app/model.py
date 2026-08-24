@@ -2,6 +2,8 @@ import os
 import logging
 from typing import Any
 
+from app.preprocessing import DEFAULT_MIN_PIXELS, DEFAULT_MAX_PIXELS
+
 logger = logging.getLogger("veloxis.model")
 
 class ModelContainer:
@@ -15,6 +17,10 @@ class ModelContainer:
         self.adapter_path: str = ""
         self.is_loaded: bool = False
         self.load_error: str | None = None
+        # Pixel budget the processor will apply; read from the loaded processor so
+        # preprocessing matches what the adapter saw during training.
+        self.min_pixels: int = DEFAULT_MIN_PIXELS
+        self.max_pixels: int = DEFAULT_MAX_PIXELS
 
     def load(self):
         if self.is_loaded:
@@ -63,8 +69,46 @@ class ModelContainer:
         self.model = PeftModel.from_pretrained(base, self.adapter_path)
         self.model.eval()
 
-        self.processor = AutoProcessor.from_pretrained(self.base_model)
+        self.processor = self._load_processor(AutoProcessor)
+        self._read_pixel_budget()
         self.is_loaded = True
         logger.info("Qwen2.5-VL + Veloxis LoRA adapter ready.")
+
+    def _load_processor(self, AutoProcessor):
+        """Prefer the adapter's processor: it carries the training-time pixel budget.
+
+        Loading the base model's processor instead silently swaps in Qwen's defaults
+        (3136 / 12845056), which puts small documents far below the resolution the
+        adapter was fine-tuned on.
+        """
+        if os.path.isfile(os.path.join(self.adapter_path, "preprocessor_config.json")):
+            logger.info("Loading processor from adapter dir %s", self.adapter_path)
+            return AutoProcessor.from_pretrained(
+                self.adapter_path,
+                min_pixels=DEFAULT_MIN_PIXELS,
+                max_pixels=DEFAULT_MAX_PIXELS,
+            )
+
+        logger.warning(
+            "No preprocessor_config.json in the adapter dir; falling back to %s with the "
+            "training pixel budget applied explicitly.",
+            self.base_model,
+        )
+        return AutoProcessor.from_pretrained(
+            self.base_model,
+            min_pixels=DEFAULT_MIN_PIXELS,
+            max_pixels=DEFAULT_MAX_PIXELS,
+        )
+
+    def _read_pixel_budget(self):
+        """Mirror the processor's effective budget so preprocessing agrees with it."""
+        image_processor = getattr(self.processor, "image_processor", None)
+        self.min_pixels = int(getattr(image_processor, "min_pixels", None) or DEFAULT_MIN_PIXELS)
+        self.max_pixels = int(getattr(image_processor, "max_pixels", None) or DEFAULT_MAX_PIXELS)
+        logger.info(
+            "Image pixel budget: min=%s max=%s (%s-%s visual tokens)",
+            self.min_pixels, self.max_pixels,
+            self.min_pixels // 784, self.max_pixels // 784,
+        )
 
 model_container = ModelContainer()

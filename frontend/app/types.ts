@@ -1,58 +1,26 @@
-export interface BoundingBox {
-  id: string;
-  label: string;
-  field: string;
-  x: number; // percentage from left
-  y: number; // percentage from top
-  width: number; // percentage width
-  height: number; // percentage height
-}
-
+/** Mirrors the backend ExtractionResult schema (backend/app/schemas.py). */
 export interface ExtractedItem {
-  sku: string;
-  nama_barang: string;
-  qty: number;
-  satuan: string;
-  berat_kg: number;
-  confidence?: number;
-  matched_catalog?: boolean;
+  sku: string | null;
+  nama_barang: string | null;
+  qty: number | null;
+  satuan: string | null;
+  berat_kg: number | null;
 }
 
 export interface ExtractedData {
-  nomor_dokumen: string;
-  jenis_dokumen: string;
-  nama_vendor: string;
-  tanggal: string;
-  nomor_po?: string;
-  metode_pengiriman?: string;
-  confidence_score: number;
-  processing_time_ms: number;
-  engine_version: string;
+  nomor_dokumen: string | null;
+  jenis_dokumen: string | null;
+  nama_vendor: string | null;
+  nama_penerima: string | null;
+  tanggal: string | null;
   items: ExtractedItem[];
-  status: "verified" | "review_needed" | "synced";
+  grand_total: number | null;
 }
 
-export interface SampleDoc {
-  id: string;
-  name: string;
-  type: string;
-  vendor: string;
-  date: string;
-  description: string;
-  sampleImage: string;
-  mockData: ExtractedData;
-  boundingBoxes: BoundingBox[];
+export interface ApiError {
+  code: string;
+  message: string;
 }
 
-export interface BatchJob {
-  id: string;
-  filename: string;
-  doc_type: string;
-  vendor: string;
-  timestamp: string;
-  items_count: number;
-  total_qty: number;
-  confidence: number;
-  status: "COMPLETED" | "PROCESSING" | "REVIEW_NEEDED" | "SYNCED";
-  latency_ms: number;
-}
+/** The single screen state. The whole app is this one flow. */
+export type Stage = "idle" | "processing" | "result" | "error";
