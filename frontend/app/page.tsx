@@ -8,6 +8,8 @@ import { SAMPLE_DOCUMENTS } from "./sampleData";
 import { SampleDoc, ExtractedData } from "./types";
 import { AlertCircle, FileText } from "lucide-react";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 export default function Home() {
   const [useMockBackend, setUseMockBackend] = useState<boolean>(false);
   const [isBackendConnected, setIsBackendConnected] = useState<boolean | null>(null);
@@ -30,8 +32,7 @@ export default function Home() {
   // Check Backend Connection Health
   const checkBackendHealth = async () => {
     try {
-      const apiHost = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const res = await fetch(`${apiHost}/`, { method: "GET" });
+      const res = await fetch(`${API_URL}/health`, { method: "GET" });
       if (res.ok) {
         setIsBackendConnected(true);
         setErrorMessage(null);
@@ -74,14 +75,10 @@ export default function Home() {
     setIsProcessing(true);
     setErrorMessage(null);
 
-    // If Mock mode or Backend is offline
-    if (useMockBackend || isBackendConnected === false) {
+    // Demo presets, explicit mock mode, or an offline backend resolve locally
+    if (useMockBackend || isBackendConnected === false || !uploadedFile) {
       setTimeout(() => {
-        if (selectedSample) {
-          setExtractedData(selectedSample.mockData);
-        } else if (uploadedFile) {
-          setExtractedData(SAMPLE_DOCUMENTS[0].mockData);
-        }
+        setExtractedData((selectedSample ?? SAMPLE_DOCUMENTS[0]).mockData);
         setIsProcessing(false);
       }, 1000);
       return;
@@ -89,32 +86,27 @@ export default function Home() {
 
     // Real API Call to FastAPI Backend
     try {
-      const apiHost = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
       const formData = new FormData();
+      formData.append("file", uploadedFile);
 
-      if (uploadedFile) {
-        formData.append("file", uploadedFile);
-      } else if (selectedSample) {
-        const blob = new Blob(["Surat jalan logistics document binary"], { type: "text/plain" });
-        formData.append("file", blob, `${selectedSample.id}.pdf`);
-      }
-
-      const res = await fetch(`${apiHost}/api/v1/extract`, {
+      const res = await fetch(`${API_URL}/extract`, {
         method: "POST",
         body: formData,
       });
 
-      if (!res.ok) {
-        const errDetail = await res.text();
-        throw new Error(`API Error (${res.status}): ${errDetail}`);
+      const payload = await res.json().catch(() => null);
+
+      if (!res.ok || !payload?.success) {
+        const detail = payload?.error?.message || `HTTP ${res.status}`;
+        throw new Error(`Ekstraksi gagal: ${detail}`);
       }
 
-      const rawData = await res.json();
+      const rawData = payload.data ?? {};
       const formattedData: ExtractedData = {
-        nomor_dokumen: rawData.nomor_dokumen || "SJ/2026/08/010",
-        jenis_dokumen: rawData.jenis_dokumen || "Surat Jalan Pengiriman",
-        nama_vendor: rawData.nama_vendor || "PT Logistik Utama Nusantara",
-        tanggal: rawData.tanggal || "2026-08-23",
+        nomor_dokumen: rawData.nomor_dokumen || "—",
+        jenis_dokumen: rawData.jenis_dokumen || "—",
+        nama_vendor: rawData.nama_vendor || "—",
+        tanggal: rawData.tanggal || "—",
         confidence_score: 99.4,
         processing_time_ms: 1180,
         engine_version: "Veloxis Vision Engine v2.4",
@@ -130,12 +122,7 @@ export default function Home() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Gagal memproses dokumen surat jalan";
       setErrorMessage(msg);
-      // Fallback to sample data for smooth demonstration
-      if (selectedSample) {
-        setExtractedData(selectedSample.mockData);
-      } else {
-        setExtractedData(SAMPLE_DOCUMENTS[0].mockData);
-      }
+      setExtractedData(null);
     } finally {
       setIsProcessing(false);
     }
@@ -158,7 +145,7 @@ export default function Home() {
           <div className="p-3.5 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs flex items-center justify-between shadow-2xs">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-              <span>{errorMessage} (Menggunakan data sampel sebagai cadangan)</span>
+              <span>{errorMessage}</span>
             </div>
             <button
               onClick={() => setErrorMessage(null)}

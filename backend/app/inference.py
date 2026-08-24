@@ -57,6 +57,25 @@ MOCK_RESULT = {
     "grand_total": 150000.0,
 }
 
+def load_document_image(file_bytes: bytes, filename: str) -> Image.Image:
+    """Decode an upload into a single RGB PIL image. PDFs render their first page."""
+    if filename.lower().endswith(".pdf") or file_bytes[:5] == b"%PDF-":
+        try:
+            import pypdfium2 as pdfium
+
+            pdf = pdfium.PdfDocument(file_bytes)
+            if len(pdf) == 0:
+                raise ValueError("PDF has no pages.")
+            bitmap = pdf[0].render(scale=2)
+            return bitmap.to_pil().convert("RGB")
+        except Exception as e:
+            raise ValueError(f"Could not render PDF: {e}")
+
+    try:
+        return Image.open(io.BytesIO(file_bytes)).convert("RGB")
+    except Exception as e:
+        raise ValueError(f"Invalid image content: {e}")
+
 def extract_json_substring(text: str) -> str:
     start_idx = text.find("{")
     end_idx = text.rfind("}")
@@ -73,10 +92,7 @@ def run_inference(image_bytes: bytes, filename: str) -> dict:
         return result.model_dump()
 
     # Qwen mode
-    try:
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    except Exception as e:
-        raise ValueError(f"Invalid image content: {e}")
+    image = load_document_image(image_bytes, filename)
 
     model = model_container.model
     processor = model_container.processor
