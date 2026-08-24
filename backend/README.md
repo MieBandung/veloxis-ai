@@ -17,10 +17,11 @@ FastAPI backend service for extracting structured JSON from logistics documents 
 backend/
 │
 ├── app/
-│   ├── main.py        # FastAPI entry point & endpoints
-│   ├── model.py       # Qwen2.5-VL & LoRA model loader (Loaded once)
-│   ├── inference.py   # Vision prompt execution & robust JSON parsing
-│   └── schemas.py     # Pydantic extraction output schemas
+│   ├── main.py          # FastAPI entry point & endpoints
+│   ├── model.py         # Qwen2.5-VL & LoRA model loader (Loaded once)
+│   ├── preprocessing.py # Document -> model-ready page images
+│   ├── inference.py     # Vision prompt execution & robust JSON parsing
+│   └── schemas.py       # Pydantic extraction output schemas
 │
 ├── models/
 │   └── qwen-veloxis/
@@ -63,6 +64,51 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
+## Document Ingestion
+
+`app/preprocessing.py` turns an upload into the page images the model expects. It exists
+to prevent two failure modes that made PNG support unreliable:
+
+**Transparency.** `Image.convert("RGB")` drops the alpha channel and keeps whatever RGB
+sits underneath — usually zeros. A document exported with a transparent background
+therefore reached the model as a solid black rectangle. Alpha is now composited onto
+white instead.
+
+**Resolution.** The Veloxis adapter was fine-tuned through a processor pinned to
+`min_pixels=200704` / `max_pixels=602112`, i.e. 256–768 visual tokens. Loading the *base*
+model's processor silently substitutes Qwen's defaults (3136 / 12845056), so a 300×300
+document arrived at ~121 visual tokens — far below anything seen in training — and the
+adapter returned unparseable output, while a 500×500 document (324 tokens) worked. The
+processor is now loaded from the adapter directory, which ships the training-time
+`preprocessor_config.json`, and pages are normalised into that budget with LANCZOS
+resampling before inference.
+
+This is a train/inference preprocessing mismatch, not a minimum-resolution requirement:
+small documents are upscaled, not rejected.
+
+Also handled: EXIF orientation, palette/16-bit/CMYK/bitonal colour modes, image integrity
+checks, and a decompression-bomb guard. PDFs are rendered page-by-page (up to
+`MAX_PDF_PAGES`, default 5) at a scale targeting the same pixel budget; multi-page results
+are merged into one document — the first non-null header field wins and item rows are
+concatenated.
+
+## Error Codes
+
+`POST /extract` returns `{"success": false, "error": {"code", "message"}}` on failure.
+Messages never contain stack traces or internals; the frontend maps each code to
+operator-facing text.
+
+| Code | HTTP | Meaning |
+| --- | --- | --- |
+| `INVALID_FILE` | 400 | Extension/MIME type not supported |
+| `EMPTY_FILE` | 400 | Upload contained no bytes |
+| `FILE_TOO_LARGE` | 413 | Above the 10 MB limit |
+| `UNREADABLE_DOCUMENT` | 400 | Damaged, encrypted, or undecodable file |
+| `INVALID_MODEL_OUTPUT` | 422 | Model output was not valid JSON for the schema |
+| `MODEL_UNAVAILABLE` | 503 | Model not loaded yet |
+| `INFERENCE_FAILURE` | 500 | Generation failed |
+| `INTERNAL_SERVER_ERROR` | 500 | Unexpected server error |
+
 ## API Documentation
 
 ### `GET /health`
@@ -80,7 +126,7 @@ Response:
 ### `POST /extract`
 
 - **Content-Type**: `multipart/form-data`
-- **Body**: `file` (`.jpg`, `.png`, `.webp`, `.pdf` — PDFs use the first page)
+- **Body**: `file` (`.jpg`, `.png`, `.webp`, `.pdf`)
 
 Success Response (HTTP 200):
 ```json
