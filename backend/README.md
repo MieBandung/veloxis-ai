@@ -6,10 +6,10 @@ FastAPI backend service for extracting structured JSON from logistics documents 
 
 - **Endpoints**:
   - `GET /health` — Check backend status & active AI mode.
-  - `POST /extract` — Upload document image (JPG, PNG, WEBP) and retrieve structured JSON (`ExtractionResult`).
-- **Dual Mode (`AI_MODE`)**:
-  - `AI_MODE=mock` — Fast CPU/lightweight development mode (returns static mock response without loading model).
-  - `AI_MODE=qwen` — Production 4-bit QLoRA inference on GPU.
+  - `POST /extract` — Upload a document (JPG, PNG, WEBP, PDF) and retrieve structured JSON (`ExtractionResult`).
+- **`AI_MODE`**:
+  - `AI_MODE=qwen` *(default)* — Production 4-bit QLoRA inference on GPU. Startup fails loudly if the model or adapter cannot be loaded.
+  - `AI_MODE=mock` — Opt-in development mode only; returns a static response without loading the model.
 
 ## Project Structure
 
@@ -24,13 +24,12 @@ backend/
 │
 ├── models/
 │   └── qwen-veloxis/
-│       └── epoch-1/   # LoRA adapter checkpoint weights
+│       └── best_adapter/   # Veloxis LoRA adapter (mounted into the container)
 │
 ├── samples/           # Sample logistics documents for smoke tests
 ├── requirements.txt
 ├── .env.example
 ├── Dockerfile
-├── docker-compose.yml
 └── README.md
 ```
 
@@ -38,19 +37,24 @@ backend/
 
 ### 1. Environment Variables
 
-Copy `.env.example` to `.env`:
-
-```bash
-cp .env.example .env
-```
-
-Default settings use `AI_MODE=mock`.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AI_MODE` | `qwen` | `qwen` for real inference, `mock` for local development |
+| `BASE_MODEL` | `Qwen/Qwen2.5-VL-3B-Instruct` | Downloaded by Transformers on first run |
+| `ADAPTER_PATH` | `/app/models/qwen-veloxis/best_adapter` | Veloxis LoRA adapter, mounted by compose |
+| `HF_HOME` | `/root/.cache/huggingface` | Cache dir backed by the `hf-cache` volume |
+| `MAX_NEW_TOKENS` | `512` | Generation budget |
+| `LOAD_IN_4BIT` | `true` | 4-bit NF4 quantization (matches training) |
 
 ### 2. Run with Docker
+
+From the repository root:
 
 ```bash
 docker compose up --build
 ```
+
+Requires an NVIDIA GPU with the container toolkit — the 3B vision model will not run on CPU in practice.
 
 ### 3. Run Locally with Python
 
@@ -67,16 +71,16 @@ Response:
 ```json
 {
   "status": "ok",
-  "model": "Qwen2.5-VL-3B-Instruct",
-  "adapter": "epoch-1",
-  "ai_mode": "mock"
+  "model": "Qwen/Qwen2.5-VL-3B-Instruct",
+  "adapter": "/app/models/qwen-veloxis/best_adapter",
+  "ai_mode": "qwen"
 }
 ```
 
 ### `POST /extract`
 
 - **Content-Type**: `multipart/form-data`
-- **Body**: `file` (Image: `.jpg`, `.png`, `.webp`)
+- **Body**: `file` (`.jpg`, `.png`, `.webp`, `.pdf` — PDFs use the first page)
 
 Success Response (HTTP 200):
 ```json

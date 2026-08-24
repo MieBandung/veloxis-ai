@@ -14,7 +14,8 @@ from app.inference import run_inference
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("veloxis.main")
 
-ALLOWED_MIME_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+ALLOWED_MIME_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "application/pdf"}
+ALLOWED_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".pdf")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
 
 @asynccontextmanager
@@ -41,9 +42,9 @@ app.add_middleware(
 @app.get("/health")
 def health_check():
     return {
-        "status": "ok",
-        "model": os.getenv("BASE_MODEL", "Qwen2.5-VL-3B-Instruct"),
-        "adapter": "epoch-1",
+        "status": "ok" if model_container.is_loaded else "loading",
+        "model": model_container.base_model or os.getenv("BASE_MODEL", ""),
+        "adapter": model_container.adapter_path or os.getenv("ADAPTER_PATH", ""),
         "ai_mode": model_container.ai_mode,
     }
 
@@ -52,14 +53,14 @@ async def extract_document(file: UploadFile = File(...)):
     # Validate MIME type
     content_type = (file.content_type or "").lower()
     filename = file.filename or ""
-    if content_type not in ALLOWED_MIME_TYPES and not filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+    if content_type not in ALLOWED_MIME_TYPES and not filename.lower().endswith(ALLOWED_EXTENSIONS):
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={
                 "success": False,
                 "error": {
                     "code": "INVALID_FILE",
-                    "message": "Unsupported file format. Only JPG, PNG, and WEBP are supported."
+                    "message": "Unsupported file format. Only JPG, PNG, WEBP, and PDF are supported."
                 }
             }
         )

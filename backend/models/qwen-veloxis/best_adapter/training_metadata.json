@@ -1,0 +1,15 @@
+{
+  "base_model": "Qwen/Qwen2.5-VL-3B-Instruct",
+  "epoch": 2,
+  "validation_loss": 0.23294727862985046,
+  "lora": {
+    "r": 8,
+    "alpha": 16,
+    "dropout": 0.05,
+    "target_modules": [
+      "q_proj",
+      "v_proj"
+    ]
+  },
+  "4bit": true
+}

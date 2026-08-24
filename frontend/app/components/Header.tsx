@@ -3,6 +3,8 @@
 import React from "react";
 import { Server, ExternalLink, FileText, BookOpen } from "lucide-react";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 interface HeaderProps {
   isBackendConnected: boolean | null;
   useMockBackend: boolean;
@@ -83,7 +85,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Swagger API Link */}
           <a
-            href="http://localhost:8000/docs"
+            href={`${API_URL}/docs`}
             target="_blank"
             rel="noopener noreferrer"
             className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-600 transition"
