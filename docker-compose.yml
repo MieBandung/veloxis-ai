@@ -1,9 +1,13 @@
 services:
   backend:
     build: ./backend
+    tty: true
+    stdin_open: true
     ports:
       - "8000:8000"
     environment:
+      PYTHONUNBUFFERED: "1"
+      HF_HUB_DISABLE_PROGRESS_BARS: "0"
       AI_MODE: ${AI_MODE:-qwen}
       BASE_MODEL: ${BASE_MODEL:-Qwen/Qwen2.5-VL-3B-Instruct}
       ADAPTER_PATH: /app/models/qwen-veloxis/best_adapter
