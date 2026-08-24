@@ -2,4 +2,12 @@ fastapi>=0.100.0
 uvicorn[standard]>=0.20.0
 python-multipart>=0.0.6
 pydantic>=2.0.0
-openai
+Pillow>=9.0.0
+python-dotenv>=1.0.0
+# AI dependencies for GPU mode (qwen)
+# torch
+# transformers
+# peft
+# accelerate
+# bitsandbytes
+# qwen-vl-utils
