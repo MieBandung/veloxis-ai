@@ -1,0 +1,22 @@
+# For CUDA GPU hosts, use 'cu124'.
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+# API layer
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# Document decoding
+Pillow>=10.0.0
+pypdfium2>=4.30.0
+
+# Qwen2.5-VL + Veloxis LoRA adapter
+torch>=2.4.0
+torchvision>=0.19.0
+transformers>=4.49.0
+accelerate>=0.34.0
+peft>=0.13.0
+bitsandbytes>=0.43.0
+qwen-vl-utils>=0.0.8

@@ -2,7 +2,7 @@
 
 > **Rapid Vision-LLM Document Extraction for High-Throughput Warehouse Logistics**
 
-Intelligent Document Processing (IDP) platform built with **FastAPI**, **Next.js 14**, **Tailwind CSS**, and **Fine-Tuned Vision-LLM API**.
+Intelligent Document Processing (IDP) platform built with **FastAPI**, **Next.js**, **Tailwind CSS**, and a **fine-tuned Qwen2.5-VL vision model**.
 
 ---
 
@@ -25,11 +25,11 @@ Intelligent Document Processing (IDP) platform built with **FastAPI**, **Next.js
 - **FastAPI** (REST API Engine)
 - **Uvicorn** (ASGI Server)
 - **Pydantic v2** (Data Validation & Serialization)
-- **Fine-Tuned Vision-LLM API**
+- **Transformers + PEFT** (Qwen2.5-VL-3B-Instruct + Veloxis LoRA adapter)
 
 ### Frontend
-- **Next.js 14** (App Router)
-- **React 18+**
+- **Next.js 16** (App Router)
+- **React 19**
 - **TypeScript**
 - **Tailwind CSS**
 
@@ -66,10 +66,7 @@ Pastikan **Docker Desktop** sudah terinstall dan aktif di komputer kamu.
 git clone [https://github.com/Lowwyi/veloxis-ai.git](https://github.com/Lowwyi/veloxis-ai.git)
 cd veloxis-ai
 
-# 2. Setup Environment Variables
-cp .env.example .env
-
-# 3. Build and Run Container
+# 2. Build and Run Containers (GPU host required for AI_MODE=qwen)
 docker compose up --build
 
 ```
@@ -84,18 +81,19 @@ Akses layanan melalui browser:
 
 ## ⚙️ Environment Variables
 
-Buat file `.env` di root folder dengan konfigurasi berikut:
+Defaults are wired directly into `docker-compose.yml`; override them via a root `.env` if needed.
 
 ```env
-# Server Config
-PORT=8000
-ENVIRONMENT=development
+AI_MODE=qwen
+BASE_MODEL=Qwen/Qwen2.5-VL-3B-Instruct
+LOAD_IN_4BIT=true
+MAX_NEW_TOKENS=512
 
-# AI Model Credentials
-VISION_LLM_API_KEY=your_vision_llm_api_key_here
-MODEL_NAME=gemini-1.5-flash
-
+# Browser-side backend URL, inlined into the Next.js build
+NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
+
+`ADAPTER_PATH` and `HF_HOME` are fixed by compose. See `backend/.env.example` and `frontend/.env.example`.
 
 ---
 
@@ -103,24 +101,32 @@ MODEL_NAME=gemini-1.5-flash
 
 ### Extract Logistics Document
 
-* **Endpoint**: `POST /api/v1/extract`
+* **Endpoint**: `POST /extract`
 * **Content-Type**: `multipart/form-data`
-* **Request Body**: `file` (Format: `.pdf`, `.png`, `.jpg`, `.jpeg`)
-* **Response**: `200 OK` (Structured JSON)
+* **Request Body**: `file` (`.pdf`, `.png`, `.jpg`, `.jpeg`, `.webp`)
+* **Response**: `200 OK`
 
 ```json
 {
-  "nomor_dokumen": "SJ/2026/08/010",
-  "jenis_dokumen": "Surat Jalan",
-  "nama_vendor": "PT Logistik Maju Bersama",
-  "tanggal": "2026-08-05",
-  "items": [
-    {
-      "sku": "SKU-LOG-01",
-      "nama_barang": "Kardus Master Box",
-      "qty": 150,
-      "satuan": "Box",
-      "berat_kg": 75.0
-    }
-  ]
+  "success": true,
+  "data": {
+    "nomor_dokumen": "SJ/2026/08/010",
+    "jenis_dokumen": "Surat Jalan",
+    "nama_vendor": "PT Logistik Maju Bersama",
+    "nama_penerima": "Gudang Pusat",
+    "tanggal": "2026-08-05",
+    "items": [
+      {
+        "sku": "SKU-LOG-01",
+        "nama_barang": "Kardus Master Box",
+        "qty": 150,
+        "satuan": "Box",
+        "berat_kg": 75.0
+      }
+    ],
+    "grand_total": null
+  }
 }
+```
+
+Health check: `GET /health`.

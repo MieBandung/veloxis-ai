@@ -1,69 +1,131 @@
-import Image from "next/image";
+"use client";
+
+import React, { useCallback, useEffect, useState } from "react";
+import { Header } from "./components/Header";
+import { UploadPanel } from "./components/UploadPanel";
+import { ResultPanel } from "./components/ResultPanel";
+import { checkHealth, extractDocument, validateFile } from "./lib/api";
+import { ExtractedData, Stage } from "./types";
 
 export default function Home() {
+  const [isBackendOnline, setIsBackendOnline] = useState<boolean | null>(null);
+
+  const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  const [stage, setStage] = useState<Stage>("idle");
+  const [data, setData] = useState<ExtractedData | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const refreshHealth = useCallback(async () => {
+    setIsBackendOnline(await checkHealth());
+  }, []);
+
+  // Probe the backend once on mount; state is set in the async callback, and
+  // skipped if the component unmounted while the request was in flight.
+  useEffect(() => {
+    let cancelled = false;
+    checkHealth().then((online) => {
+      if (!cancelled) setIsBackendOnline(online);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Release the object URL whenever it is replaced or the page unmounts.
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
+  const handleSelectFile = (selected: File) => {
+    const problem = validateFile(selected);
+    if (problem) {
+      setFile(null);
+      setPreviewUrl(null);
+      setData(null);
+      setStage("error");
+      setErrorMessage(problem);
+      return;
+    }
+
+    setFile(selected);
+    setPreviewUrl(URL.createObjectURL(selected));
+    setData(null);
+    setErrorMessage(null);
+    setStage("idle");
+  };
+
+  const handleClearFile = () => {
+    setFile(null);
+    setPreviewUrl(null);
+    setData(null);
+    setErrorMessage(null);
+    setStage("idle");
+  };
+
+  const handleExtract = async () => {
+    if (!file) return;
+
+    setStage("processing");
+    setErrorMessage(null);
+
+    try {
+      const result = await extractDocument(file);
+      setData(result);
+      setStage("result");
+      setIsBackendOnline(true);
+    } catch (err) {
+      setData(null);
+      setErrorMessage(err instanceof Error ? err.message : "Dokumen gagal diproses.");
+      setStage("error");
+      refreshHealth();
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
+      <Header isBackendOnline={isBackendOnline} onRefresh={refreshHealth} />
+
+      <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+        <div className="mb-6">
+          <h1 className="text-lg font-semibold text-slate-900">Ekstraksi Dokumen Surat Jalan</h1>
+          <p className="text-sm text-slate-600 mt-1">
+            Unggah surat jalan, faktur, atau delivery order. Sistem membaca isinya dan
+            menampilkan datanya dalam bentuk terstruktur.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+
+        {isBackendOnline === false && (
+          <div
+            role="alert"
+            className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
           >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            Server ekstraksi sedang tidak dapat dihubungi. Dokumen belum bisa diproses.
+          </div>
+        )}
+
+        {/* Desktop: document left, result right. Mobile: stacked in the same order. */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+          <UploadPanel
+            file={file}
+            previewUrl={previewUrl}
+            isProcessing={stage === "processing"}
+            onSelectFile={handleSelectFile}
+            onClearFile={handleClearFile}
+            onExtract={handleExtract}
+          />
+          <ResultPanel stage={stage} data={data} errorMessage={errorMessage} />
         </div>
       </main>
+
+      <footer className="border-t border-slate-200 bg-white py-4">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 text-xs text-slate-500">
+          Veloxis AI — Ekstraksi dokumen inbound gudang
+        </div>
+      </footer>
     </div>
   );
 }
