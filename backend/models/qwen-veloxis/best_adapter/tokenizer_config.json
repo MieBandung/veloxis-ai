@@ -199,7 +199,7 @@
   "eos_token": "<|im_end|>",
   "errors": "replace",
   "extra_special_tokens": {},
-  "max_pixels": 602112,
+  "max_pixels": 802816,
   "min_pixels": 200704,
   "model_max_length": 131072,
   "pad_token": "<|endoftext|>",
