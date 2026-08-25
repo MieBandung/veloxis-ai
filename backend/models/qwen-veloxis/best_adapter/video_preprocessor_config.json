@@ -22,7 +22,7 @@
   ],
   "input_data_format": null,
   "max_frames": 768,
-  "max_pixels": 602112,
+  "max_pixels": 802816,
   "merge_size": 2,
   "min_frames": 4,
   "min_pixels": 200704,
